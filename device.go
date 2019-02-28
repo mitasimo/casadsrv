@@ -10,33 +10,40 @@ import (
 	"github.com/tarm/serial"
 )
 
-// NewSerialCasadDevice create new SerialDevice
+// NewSerialCasadDevice create new SerialCasadDevice
 func NewSerialCasadDevice(portName string, portSpeed int) (*SerialCasadDevice, error) {
 
-	// канал для отправки запросов
+	// создать канал для отправки запросов
 	qchan := make(chan chan weigthResult)
 
 	// запустить горутину для обмена с устройством
 	go func() {
-		// var (
-		// 	weigth   float64
-		// 	unstable bool
-		// 	err      error
-		// 	timeStamp = time.Now().Add(time.Second * (-5)) // время последнего обмена с устройством
-		// )
+		var (
+			weigth    float64
+			unstable  bool
+			err       error
+			timeStamp = time.Now().Add(time.Second * (-5)) // время последнего обмена с устройством
+		)
 		for rchan := range qchan {
-			//if err != nil || time.Since(timeStamp) > time.Second {
-			// предыдущий обмен был либо с ошибкой, либо более секунды назад
-			// необходимо выполнить обмен с устройством
-			weigth, unstable, err := getWeigth(portName, portSpeed)
-			//timeStamp = time.Now()
-			//}
+			if err != nil || time.Since(timeStamp) > time.Second {
+				// предыдущий обмен был либо с ошибкой, либо более секунды назад
+				// необходимо выполнить обмен с устройством
+				weigth, unstable, err = getWeigth(portName, portSpeed)
+				timeStamp = time.Now()
+			}
 			rchan <- weigthResult{weigth, unstable, err}
 			close(rchan)
 		}
 	}()
 
 	return &SerialCasadDevice{queryChan: qchan}, nil
+}
+
+// тип значения в канале результата
+type weigthResult struct {
+	Weigth   float64
+	Unstable bool
+	Error    error
 }
 
 // SerialCasadDevice -
@@ -46,26 +53,19 @@ type SerialCasadDevice struct {
 
 // GetWeigth -
 func (d *SerialCasadDevice) GetWeigth() (weigth float64, unstable bool, err error) {
-	// Буферизация канала обязательна!!!
-	// При задержке чтения из порта в select'е
-	// будут получены данные из канала таймаута,
-	// а получение данных из канала результата никогда не будет выполнено.
-	// Что приведет к зависанию горутины чтения из порта!!!
 
+	// канал для получения результата
 	resultChan := make(chan weigthResult, 1)
+	// запрос на получение веса (данных из устройства)
 	d.queryChan <- resultChan
-
-	select {
-	case <-time.After(time.Second * 2):
-		err = fmt.Errorf("Ошибка обмена с устройсвом: таймаут")
-	case res, ok := <-resultChan:
-		if !ok {
-			err = errors.New("Ошибка: канал устройства закрыт")
-		} else {
-			weigth = res.Weigth
-			unstable = res.Unstable
-			err = res.Error
-		}
+	// получить вес
+	res, ok := <-resultChan
+	if !ok {
+		err = errors.New("Ошибка: канал устройства закрыт")
+	} else {
+		weigth = res.Weigth
+		unstable = res.Unstable
+		err = res.Error
 	}
 	return
 }
@@ -76,6 +76,9 @@ func (d *SerialCasadDevice) Disconnect() {
 	close(d.queryChan)
 }
 
+// getWeigth открывает последовательный порт,
+// отправляет запрос устройству,
+// получает и разбирает ответ
 func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, err error) {
 	// открыть последовательный порт
 	cfg := &serial.Config{
@@ -91,11 +94,9 @@ func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, e
 	defer conn.Close()
 
 	// очистить все буферы, прекратить людые операции ввода/вывода с портом
-
 	conn.Flush()
 
 	// отправить команду ENQ
-
 	enq := []byte{0x05}
 	nBytes, err := conn.Write(enq)
 	if err != nil {
@@ -125,7 +126,6 @@ func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, e
 	}
 
 	// отправить команду DC1
-
 	dc1 := []byte{0x11}
 	nBytes, err = conn.Write(dc1)
 	if err != nil {
@@ -139,6 +139,7 @@ func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, e
 
 	rBuff := make([]byte, 1) // буфер для чтения
 
+	// параметры ответа
 	const (
 		numPred    = 25   // читать не более numPred байт для до признака начало ответа
 		numBody    = 25   // читать не более numBody байт для до признака конца ответа
@@ -149,7 +150,6 @@ func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, e
 	)
 
 	// поиск заголовка ответа
-
 	num := 0
 	for ; num < numPred; num++ {
 		nBytes, err = conn.Read(rBuff)
@@ -167,7 +167,6 @@ func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, e
 	}
 
 	// чтение тела ответа
-
 	buff := make([]byte, 0, 1024)
 	num = 0
 	for ; num < numBody; num++ {
@@ -199,10 +198,4 @@ func getWeigth(portName string, portSpeed int) (weigth float64, unstable bool, e
 	unstable = buff[0] != stabSign
 
 	return
-}
-
-type weigthResult struct {
-	Weigth   float64
-	Unstable bool
-	Error    error
 }
