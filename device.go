@@ -19,17 +19,17 @@ func NewSerialCasadDevice(portName string, portSpeed int) (*SerialCasadDevice, e
 	// запустить горутину для обмена с устройством
 	go func() {
 		var (
-			weigth    float64
-			unstable  bool
-			err       error
-			timeStamp = time.Now().Add(time.Second * (-5)) // время последнего обмена с устройством
+			weigth        float64
+			unstable      bool
+			err           error
+			lastTimeStamp = time.Now().Add(time.Second * (-5)) // стартовое время последнего обмена с устройством
 		)
 		for rchan := range qchan {
-			if err != nil || time.Since(timeStamp) > time.Second {
-				// предыдущий обмен был либо с ошибкой, либо более секунды назад
-				// необходимо выполнить обмен с устройством
+			if time.Since(lastTimeStamp) > time.Second {
+				// Предыдущий обмен был более секунды назад.
+				// Необходимо выполнить обмен с устройством
 				weigth, unstable, err = getWeigth(portName, portSpeed)
-				timeStamp = time.Now()
+				lastTimeStamp = time.Now()
 			}
 			rchan <- weigthResult{weigth, unstable, err}
 			close(rchan)
